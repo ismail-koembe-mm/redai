@@ -101,14 +101,14 @@ export function App() {
   }));
   const [newScanField, setNewScanField] = useState<NewScanField>("name");
   const [newScanForm, setNewScanForm] = useState<NewScanFormState>({
-    name: "",
-    sourceDirectory: process.cwd(),
-    validatorEnvironmentId: "",
-    scannerProvider: "claude",
-    scanCoverage: "balanced",
-    unitAgentConcurrency: 4,
-    validatorAgentConcurrency: 2,
-  });
+  name: "",
+  sourceDirectory: process.cwd(),
+  validatorEnvironmentId: "",
+  scannerProvider: "gemini",
+  scanCoverage: "balanced",
+  unitAgentConcurrency: 4,
+  validatorAgentConcurrency: 2,
+});
   const [newEnvironmentField, setNewEnvironmentField] = useState<NewEnvironmentField>("name");
   const [newEnvironmentForm, setNewEnvironmentForm] = useState<NewEnvironmentFormState>({
     name: "",
@@ -783,7 +783,7 @@ function nextValidatorEnvironmentId(
   return environments[nextIndex]?.id ?? environments[0]?.id ?? "";
 }
 
-const scannerProviders: NewScanScannerProvider[] = ["claude", "codex"];
+const scannerProviders: NewScanScannerProvider[] = ["claude", "codex", "gemini"];
 
 function nextScannerProvider(
   provider: NewScanScannerProvider,

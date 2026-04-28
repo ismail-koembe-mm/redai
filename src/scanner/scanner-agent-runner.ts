@@ -4,11 +4,15 @@ import {
   collectClaudeStructuredOutput,
 } from "../agents/claude/claude-agent-session";
 import { canUseCodexSdk, collectCodexStructuredOutput } from "../agents/codex/codex-agent-session";
+import {
+  canUseGeminiAgentSdk,
+  collectGeminiAgentOutput,
+} from "../agents/gemini/gemini-agent-session";
 import type { RunArtifactStore } from "../artifacts/run-artifact-store";
 import type { Artifact } from "../domain";
 import type { RunEventEmitter } from "../pipeline/events";
 
-export type ScannerProvider = "claude" | "codex";
+export type ScannerProvider = "claude" | "codex" | "gemini";
 
 export interface ScannerCollectInput {
   runId: string;
@@ -22,7 +26,7 @@ export interface ScannerCollectInput {
    */
   transcriptName: string;
   /**
-   * Human label for the transcript artifact title. The runner adds a `Codex ` prefix when relevant.
+   * Human label for the transcript artifact title. The runner adds a provider prefix when relevant.
    * Example: `"Threat model agent transcript"`.
    */
   transcriptLabel: string;
@@ -147,6 +151,38 @@ export const codexScannerAgentRunner: ScannerAgentRunner = {
   },
 };
 
+export const geminiScannerAgentRunner: ScannerAgentRunner = {
+  id: "gemini",
+  label: "Gemini Vertex AI",
+  available: canUseGeminiAgentSdk,
+  async collect(input) {
+    const { structuredOutput, transcriptArtifact } = await collectGeminiAgentOutput({
+      runId: input.runId,
+      prompt: input.prompt,
+      transcriptPath: `transcripts/gemini-${input.transcriptName}.txt`,
+      transcriptTitle: `Gemini ${lowercaseFirst(input.transcriptLabel)}`,
+      ...(input.artifactStore ? { artifactStore: input.artifactStore } : {}),
+      ...(input.emit ? { emit: input.emit } : {}),
+    });
+    return transcriptArtifact ? { structuredOutput, transcriptArtifact } : { structuredOutput };
+  },
+  async runProse(input) {
+    const { finalResponse, transcriptArtifact } = await collectGeminiAgentOutput({
+      runId: input.runId,
+      prompt: input.prompt,
+      transcriptPath: `transcripts/gemini-${input.transcriptName}.txt`,
+      transcriptTitle: `Gemini ${lowercaseFirst(input.transcriptLabel)}`,
+      ...(input.artifactStore ? { artifactStore: input.artifactStore } : {}),
+      ...(input.emit ? { emit: input.emit } : {}),
+    });
+    return finalizeProseResult({
+      prose: finalResponse,
+      input,
+      ...(transcriptArtifact ? { transcriptArtifact } : {}),
+    });
+  },
+};
+
 async function finalizeProseResult(args: {
   prose: string;
   transcriptArtifact?: Artifact;
@@ -182,7 +218,14 @@ async function finalizeProseResult(args: {
 }
 
 export function getScannerAgentRunner(provider: ScannerProvider): ScannerAgentRunner {
-  return provider === "codex" ? codexScannerAgentRunner : claudeScannerAgentRunner;
+  switch (provider) {
+    case "gemini":
+      return geminiScannerAgentRunner;
+    case "codex":
+      return codexScannerAgentRunner;
+    default:
+      return claudeScannerAgentRunner;
+  }
 }
 
 /**

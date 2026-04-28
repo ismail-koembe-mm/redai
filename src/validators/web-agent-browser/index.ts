@@ -21,6 +21,14 @@ import {
   canUseOpenAiApi,
   collectOpenAiStructuredOutput,
 } from "../../agents/openai/openai-structured-output";
+import {
+  canUseGeminiAgentSdk,
+  collectGeminiAgentOutput,
+} from "../../agents/gemini/gemini-agent-session";
+import {
+  canUseGeminiApi,
+  collectGeminiStructuredOutput,
+} from "../../agents/gemini/gemini-structured-output";
 import { FilesystemRunArtifactStore } from "../../artifacts/filesystem-run-artifact-store";
 import type { ValidationJob } from "../../domain";
 import { getRedaiRunDir } from "../../paths";
@@ -91,12 +99,12 @@ export function webAgentBrowserValidator(): ValidatorPlugin {
         return runCodexWebValidation(preparedJob, emit);
       }
 
-      if (!canUseClaudeAgentSdk()) {
+      if (!canUseGeminiAgentSdk() && !canUseClaudeAgentSdk()) {
         return {
           findingId: preparedJob.findingId,
           status: "unable-to-test",
           confidence: "low",
-          summary: "Claude Agent SDK is not configured, so browser validation could not run.",
+          summary: "No agent SDK is configured, so browser validation could not run.",
           reproductionSteps: preparedJob.plan.steps,
           payloadsTried: [],
           evidence: [],
@@ -104,46 +112,55 @@ export function webAgentBrowserValidator(): ValidatorPlugin {
       }
 
       const artifactStore = new FilesystemRunArtifactStore();
-      const validationRun = await collectClaudeStructuredOutput({
-        runId: preparedJob.runId,
-        prompt: buildWebValidationPrompt(preparedJob),
-        options: {
-          env: { ...process.env, ...agentBrowserEnvironment(preparedJob) },
-          tools: ["Read", "Glob", "Grep", "Bash"],
-          allowedTools: ["Read", "Glob", "Grep", "Bash", "Write"],
-          disallowedTools: ["Edit", "MultiEdit"],
-        },
-        transcriptPath: `transcripts/web-validation-${safePathPart(preparedJob.id)}.jsonl`,
-        transcriptTitle: `Web validation transcript: ${preparedJob.findingId}`,
-        artifactStore,
-        emit,
-        jobId: preparedJob.id,
-      });
 
-      if (!canUseAnthropicApi()) {
-        return {
-          findingId: preparedJob.findingId,
-          status: "unable-to-test",
-          confidence: "low",
-          summary:
-            "Anthropic API is not configured, so the raw Claude validation summary could not be normalized.",
-          reproductionSteps: preparedJob.plan.steps,
-          payloadsTried: [],
-          evidence: validationRun.transcriptArtifact ? [validationRun.transcriptArtifact] : [],
-          ...(validationRun.transcriptArtifact
-            ? { agentTranscriptRef: validationRun.transcriptArtifact.path }
-            : {}),
-        };
-      }
+      const validationRun = canUseGeminiAgentSdk()
+        ? await collectGeminiAgentOutput({
+          runId: preparedJob.runId,
+          prompt: buildWebValidationPrompt(preparedJob),
+          transcriptPath: `transcripts/gemini-web-validation-${safePathPart(preparedJob.id)}.txt`,
+          transcriptTitle: `Gemini web validation transcript: ${preparedJob.findingId}`,
+          artifactStore,
+          emit,
+          jobId: preparedJob.id,
+        })
+        : await collectClaudeStructuredOutput({
+          runId: preparedJob.runId,
+          prompt: buildWebValidationPrompt(preparedJob),
+          options: {
+            env: { ...process.env, ...agentBrowserEnvironment(preparedJob) },
+            tools: ["Read", "Glob", "Grep", "Bash"],
+            allowedTools: ["Read", "Glob", "Grep", "Bash", "Write"],
+            disallowedTools: ["Edit", "MultiEdit"],
+          },
+          transcriptPath: `transcripts/web-validation-${safePathPart(preparedJob.id)}.jsonl`,
+          transcriptTitle: `Web validation transcript: ${preparedJob.findingId}`,
+          artifactStore,
+          emit,
+          jobId: preparedJob.id,
+        });
 
-      const structuredOutput = await collectAnthropicStructuredOutput({
-        instructions:
-          "Convert raw RedAI validation summaries into strict structured validation results. Do not invent evidence.",
-        input: buildValidationNormalizationPrompt(preparedJob, validationRun.finalResponse),
-        outputSchema: z.toJSONSchema(validationAgentOutputSchema) as Record<string, unknown>,
-        toolName: "emit_validation_result",
-        toolDescription: "Emit the structured RedAI validation result.",
-      });
+      const normalizationInput = buildValidationNormalizationPrompt(
+        preparedJob,
+        validationRun.finalResponse,
+      );
+
+      const structuredOutput = canUseGeminiApi()
+        ? await collectGeminiStructuredOutput({
+          instructions:
+            "Convert raw RedAI validation summaries into strict structured validation results. Do not invent evidence.",
+          input: normalizationInput,
+          outputSchema: z.toJSONSchema(validationAgentOutputSchema) as Record<string, unknown>,
+          toolName: "emit_validation_result",
+          toolDescription: "Emit the structured RedAI validation result.",
+        })
+        : await collectAnthropicStructuredOutput({
+          instructions:
+            "Convert raw RedAI validation summaries into strict structured validation results. Do not invent evidence.",
+          input: normalizationInput,
+          outputSchema: z.toJSONSchema(validationAgentOutputSchema) as Record<string, unknown>,
+          toolName: "emit_validation_result",
+          toolDescription: "Emit the structured RedAI validation result.",
+        });
 
       const parsed = validationAgentOutputSchema.safeParse(structuredOutput);
       if (!parsed.success) {
@@ -166,7 +183,7 @@ export function webAgentBrowserValidator(): ValidatorPlugin {
         validationRun.transcriptArtifact,
       );
     },
-    async cleanup() {},
+    async cleanup() { },
   };
 }
 
@@ -210,12 +227,6 @@ async function cloneBrowserProfile(runId: string, sourceProfilePath: string): Pr
       await cp(sourceProfilePath, runProfilePath, {
         recursive: true,
         force: true,
-        // Chrome's per-process runtime symlinks must never enter a clone:
-        // SingletonLock points at the live Chrome's hostname-PID and the
-        // cloned Chrome would exit with "Failed to create a ProcessSingleton
-        // for your profile directory"; RunningChromeVersion is a transient
-        // symlink to a non-existent sibling that makes fs.cp fail with
-        // "cannot copy X to a subdirectory of self X".
         filter: (src) => !/\/(Singleton(Lock|Cookie|Socket)|RunningChromeVersion)$/.test(src),
       });
     }
@@ -301,8 +312,7 @@ async function runCodexWebValidation(
         : {}),
     };
   }
-  const result = normalizeValidationAgentOutput(job, parsed.data, validationRun.transcriptArtifact);
-  return result;
+  return normalizeValidationAgentOutput(job, parsed.data, validationRun.transcriptArtifact);
 }
 
 function agentBrowserEnvironment(job: ValidationJob): Record<string, string> {
@@ -317,8 +327,6 @@ function agentBrowserEnvironment(job: ValidationJob): Record<string, string> {
 }
 
 function agentBrowserHomePath(runId: string): string {
-  // Shared across the run so every job's session shows up in one dashboard.
-  // Per-job isolation is handled by --session-name, not by separate daemons.
   return join(getRedaiRunDir(runId), "validation", "agent-browser-home");
 }
 
@@ -338,8 +346,7 @@ export async function browserSkillReadiness(): Promise<{ ready: boolean; reason:
   if (!existsSync(".agents/skills/agent-browser/SKILL.md") && !existsSync(globalSkill)) {
     return {
       ready: false,
-      reason:
-        "agent-browser skill is not installed under .agents/skills or ~/.claude/skills.",
+      reason: "agent-browser skill is not installed under .agents/skills or ~/.claude/skills.",
     };
   }
 

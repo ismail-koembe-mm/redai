@@ -57,14 +57,15 @@ export function NewScanScreen({ form, activeField, environments }: NewScanScreen
             value={environmentLabel(selectedEnvironment)}
           />
           <ChoiceRow
-            active={activeField === "scannerProvider"}
-            label="Scanner agent"
-            choices={[
-              { id: "claude", label: "Claude Code" },
-              { id: "codex", label: "Codex" },
-            ]}
-            selectedId={form.scannerProvider}
-          />
+  active={activeField === "scannerProvider"}
+  label="Scanner agent"
+  choices={[
+    { id: "claude", label: "Claude Code" },
+    { id: "codex", label: "Codex" },
+    { id: "gemini", label: "Gemini" },
+  ]}
+  selectedId={form.scannerProvider}
+/>
           <ChoiceRow
             active={activeField === "scanCoverage"}
             label="Scan coverage"

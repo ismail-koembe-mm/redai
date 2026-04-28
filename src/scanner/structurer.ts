@@ -7,12 +7,12 @@ import {
   canUseOpenAiApi,
   collectOpenAiStructuredOutput,
 } from "../agents/openai/openai-structured-output";
+import {
+  canUseGeminiApi,
+  collectGeminiStructuredOutput,
+} from "../agents/gemini/gemini-structured-output";
 import type { ScannerProvider } from "./scanner-agent-runner";
 
-/**
- * A Structurer takes free-form prose produced by an analyst agent and converts it into a typed
- * shape validated by a Zod schema. The structurer does no analysis of its own — it transcribes.
- */
 export interface Structurer {
   readonly id: ScannerProvider;
   readonly label: string;
@@ -21,13 +21,9 @@ export interface Structurer {
 }
 
 export interface StructurerInput<T extends z.ZodTypeAny> {
-  /** The free-form analyst output to transcribe. */
   prose: string;
-  /** Zod schema the output must satisfy. */
   schema: T;
-  /** Short instruction describing what the analyst was asked to produce. */
   instructions: string;
-  /** Optional abort signal. */
   signal?: AbortSignal;
 }
 
@@ -54,9 +50,7 @@ export const openAiStructurer: Structurer = {
       schemaName: "structured_output",
       ...(input.signal ? { signal: input.signal } : {}),
     });
-    if (raw === undefined) {
-      throw new Error("OpenAI structurer returned no output.");
-    }
+    if (raw === undefined) throw new Error("OpenAI structurer returned no output.");
     return input.schema.parse(raw);
   },
 };
@@ -75,13 +69,37 @@ export const anthropicStructurer: Structurer = {
       toolDescription: "Submit the structured output extracted from the analyst prose.",
       ...(input.signal ? { signal: input.signal } : {}),
     });
-    if (raw === undefined) {
-      throw new Error("Anthropic structurer returned no tool_use output.");
-    }
+    if (raw === undefined) throw new Error("Anthropic structurer returned no tool_use output.");
+    return input.schema.parse(raw);
+  },
+};
+
+export const geminiStructurer: Structurer = {
+  id: "gemini",
+  label: "Gemini structurer",
+  available: canUseGeminiApi,
+  async structure(input) {
+    const jsonSchema = z.toJSONSchema(input.schema) as Record<string, unknown>;
+    const raw = await collectGeminiStructuredOutput({
+      instructions: `${STRUCTURER_SYSTEM}\n\nAnalyst was asked to: ${input.instructions}`,
+      input: `Analyst prose:\n${input.prose}`,
+      outputSchema: jsonSchema,
+      toolName: "submit_output",
+      toolDescription: "Submit the structured output extracted from the analyst prose.",
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+    if (raw === undefined) throw new Error("Gemini structurer returned no output.");
     return input.schema.parse(raw);
   },
 };
 
 export function getStructurer(provider: ScannerProvider): Structurer {
-  return provider === "codex" ? openAiStructurer : anthropicStructurer;
+  switch (provider) {
+    case "gemini":
+      return geminiStructurer;
+    case "codex":
+      return openAiStructurer;
+    default:
+      return anthropicStructurer;
+  }
 }

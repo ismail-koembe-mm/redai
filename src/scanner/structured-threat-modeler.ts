@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ThreatModel } from "../domain";
 import { getRedaiRunDir } from "../paths";
@@ -11,19 +12,17 @@ import {
 import type { ThreatModeler, ThreatModelerInput } from "./threat-modeler";
 
 export class StructuredThreatModeler implements ThreatModeler {
-  constructor(private readonly runner: ScannerAgentRunner) {}
+  constructor(private readonly runner: ScannerAgentRunner) { }
 
   async buildThreatModel(input: ThreatModelerInput): Promise<ThreatModel> {
     const { run } = input;
     if (run.target.kind !== "source-directory") {
       throw new Error(`${this.runner.label} threat modeling requires a source-directory target.`);
     }
-
     const scratchDir = join(
       input.artifactStore?.runDir(run.id) ?? getRedaiRunDir(run.id),
       "scratch/threat-model",
     );
-
     const proseResult = await this.runner.runProse({
       runId: run.id,
       prompt: buildThreatModelAgentPrompt({ run, scratchDir }),
@@ -38,11 +37,26 @@ export class StructuredThreatModeler implements ThreatModeler {
       throw new Error(`${this.runner.label} returned no threat model prose.`);
     }
 
+    // Fallback read: Gemini agent sometimes saves the threat model to a file instead
+    // of returning it in the response. Detect this and load the file directly.
+    let prose = proseResult.prose;
+    if (prose.length < 500 && prose.toLowerCase().includes("saved to")) {
+      const pathMatch = prose.match(/saved to\s+`?([/\w.\-]+\.md)`?/i);
+      if (pathMatch?.[1]) {
+        try {
+          prose = await readFile(pathMatch[1].trim(), "utf-8");
+        } catch {
+          // Fallback failed — continue with original short prose
+        }
+      }
+    }
+
     const structurer = getStructurer(this.runner.id);
     const transcriptRef = proseResult.proseArtifact?.path ?? proseResult.transcriptArtifact?.path;
+
     try {
       const structured = await structurer.structure({
-        prose: proseResult.prose,
+        prose,
         schema: threatModelAgentOutputSchema,
         instructions:
           'Extract a threat model from the analyst\'s prose. Every distinct asset, trust boundary, entrypoint, data flow, assumption, and threat named or described in the prose MUST appear as its own entry in the corresponding array — including threats written under headings like "Threats", "Vulnerabilities", "Risks", or numbered `### N. Title` lists. Give each threat at least a title; use the surrounding paragraphs to fill severity, likelihood, rationale, affected assets, and validation ideas when the prose states them. Do not merge multiple prose threats into one entry and do not omit any.',

@@ -4,6 +4,15 @@ import { getRedaiRunDir } from "../../paths";
 
 export function buildWebValidationPrompt(job: ValidationJob): string {
   const artifactDir = `${join(getRedaiRunDir(job.runId), "artifacts/validation", job.id)}/`;
+
+  // Inject test credentials from environment variables if available.
+  // The validation agent needs credentials explicitly in the prompt to handle authentication.
+  const testUsername = process.env.USER_DE_MM_PP ?? "";
+  const testPassword = process.env.PASSWORD_DE_MM_PP ?? "";
+  const credentialsBlock = testUsername
+    ? `- Test credentials: username="${testUsername}", password="${testPassword}". Use these to log in when authentication is required.`
+    : "";
+
   return `You are RedAI's web validation agent.
 
 Validate whether a candidate web vulnerability appears exploitable based on the available source directory and validation plan.
@@ -15,6 +24,7 @@ Browser automation:
 - Every agent-browser command must include \`--session-name ${job.id}\` to stay isolated from other validation jobs sharing the dashboard.
 - Do not use the default agent-browser session.
 - Close only this session when finished with \`agent-browser --session-name ${job.id} close\`. Do not run \`close --all\` — other validation jobs may be sharing the daemon.
+- If a cookie consent banner appears, dismiss it before proceeding with any other actions.
 - Capture evidence such as screenshots, observations, URLs, and response details when available.
 - You may run helper commands, create proof-of-concept scripts, and host temporary local helper servers when they are useful for proving or disproving the finding.
 - Save generated PoCs, helper scripts, logs, screenshots, HTTP responses, and notes under ${artifactDir} and reference those paths in the final evidence list.
@@ -28,6 +38,7 @@ ${JSON.stringify(job, null, 2)}
 Browser runtime:
 - App URL: ${job.plan.metadata?.appUrl ?? "not provided"}
 - Browser profile path: ${job.plan.metadata?.profilePath ?? "not provided"} (already wired via \`AGENT_BROWSER_PROFILE\`; shared across validation jobs in this run with per-session isolation).
+${credentialsBlock}
 
 Instructions:
 - Read/search relevant source files if useful.

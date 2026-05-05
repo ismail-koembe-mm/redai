@@ -13,6 +13,7 @@ const defaultIgnorePatterns = [
   "coverage/**",
   "tmp/**",
   "temp/**",
+  ".agents/**", // avoid scanning agent skill files injected by RedAI
 ];
 
 const sourceExtensions = new Set([

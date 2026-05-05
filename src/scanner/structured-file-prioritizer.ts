@@ -12,7 +12,7 @@ import type { ScannerAgentRunner } from "./scanner-agent-runner";
 import { getStructurer } from "./structurer";
 
 export class StructuredFilePrioritizer implements FilePrioritizer {
-  constructor(private readonly runner: ScannerAgentRunner) {}
+  constructor(private readonly runner: ScannerAgentRunner) { }
 
   async prioritize(input: FilePrioritizerInput): Promise<FilePrioritization> {
     if (input.run.target.kind !== "source-directory") {
@@ -93,15 +93,45 @@ export class StructuredFilePrioritizer implements FilePrioritizer {
       };
     }
 
+    // Pre-parse JSON arrays from prose before sending to structurer.
+    // Gemini API sometimes outputs excluded files as a JSON array instead of
+    // a markdown list, which causes the structurer to dump everything into excluded.
+    // Extract and remove the array, then merge it back after structuring.
+    let proseToStructure = proseResult.prose;
+    const preParsedExcluded: string[] = [];
+    try {
+      const jsonArrayRegex = /\[\s*("[^"]+"\s*(?:,\s*"[^"]+"\s*)*)\]/;
+      const match = proseToStructure.match(jsonArrayRegex);
+      if (match) {
+        const parsedArray = JSON.parse(match[0]);
+        if (Array.isArray(parsedArray)) {
+          preParsedExcluded.push(...parsedArray);
+          proseToStructure = proseToStructure.replace(
+            match[0],
+            `\n[NOTE: ${parsedArray.length} excluded files were pre-parsed by the system.]\n`,
+          );
+        }
+      }
+    } catch {
+      // Parsing failed — continue with original prose
+    }
+
     const structurer = getStructurer(this.runner.id);
     let structured: ReturnType<typeof filePrioritizationAgentOutputSchema.parse>;
     try {
       structured = await structurer.structure({
-        prose: proseResult.prose,
+        prose: proseToStructure,
         schema: filePrioritizationAgentOutputSchema,
         instructions:
           'Extract every file the analyst named in the prose. Any path explicitly ranked, prioritized, or excluded — including anything under headings like "Prioritized", "Excluded", "Candidates", or numbered / bulleted lists — MUST appear as its own entry. Each entry has a path, a score between 0 and 1, a short rationale, and optionally a category; fill whatever the prose supplies. Do not drop paths the prose mentions.',
       });
+
+      // Merge pre-parsed excluded files back into the structured output
+      if (preParsedExcluded.length > 0) {
+        structured.excluded = Array.from(
+          new Set([...structured.excluded, ...preParsedExcluded]),
+        );
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (input.emit) {

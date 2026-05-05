@@ -66,7 +66,7 @@ export function webAgentBrowserValidator(): ValidatorPlugin {
           ? job.plan.metadata.profilePath
           : undefined;
       const profilePath = templateProfilePath
-        ? await cloneBrowserProfile(job.runId, templateProfilePath)
+        ? await cloneBrowserProfile(job.id, job.runId, templateProfilePath)
         : undefined;
       return {
         id,
@@ -122,6 +122,7 @@ export function webAgentBrowserValidator(): ValidatorPlugin {
           artifactStore,
           emit,
           jobId: preparedJob.id,
+          env: agentBrowserEnvironment(preparedJob),
         })
         : await collectClaudeStructuredOutput({
           runId: preparedJob.runId,
@@ -211,8 +212,8 @@ function withEnvironmentProfile(
 
 const profileCloneLocks = new Map<string, Promise<string>>();
 
-async function cloneBrowserProfile(runId: string, sourceProfilePath: string): Promise<string> {
-  const runProfilePath = join(getRedaiRunDir(runId), "validation", "browser-profile");
+async function cloneBrowserProfile(jobId: string, runId: string, sourceProfilePath: string): Promise<string> {
+  const runProfilePath = join(getRedaiRunDir(runId), "validation", "browser-profiles", jobId);
   const inflight = profileCloneLocks.get(runProfilePath);
   if (inflight) return inflight;
   const work = (async () => {
@@ -322,7 +323,8 @@ function agentBrowserEnvironment(job: ValidationJob): Record<string, string> {
     AGENT_BROWSER_HOME: agentBrowserHomePath(job.runId),
     AGENT_BROWSER_SESSION_NAME: job.id,
     AGENT_BROWSER_SESSION: job.id,
-    ...(profilePath ? { AGENT_BROWSER_PROFILE: profilePath } : {}),
+    // Each job uses its own isolated profile
+    ...(profilePath ? { AGENT_BROWSER_PROFILE: join(profilePath, job.id) } : {}),
   };
 }
 

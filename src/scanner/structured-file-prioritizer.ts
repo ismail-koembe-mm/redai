@@ -12,7 +12,7 @@ import type { ScannerAgentRunner } from "./scanner-agent-runner";
 import { getStructurer } from "./structurer";
 
 export class StructuredFilePrioritizer implements FilePrioritizer {
-  constructor(private readonly runner: ScannerAgentRunner) {}
+  constructor(private readonly runner: ScannerAgentRunner) { }
 
   async prioritize(input: FilePrioritizerInput): Promise<FilePrioritization> {
     if (input.run.target.kind !== "source-directory") {
@@ -100,7 +100,7 @@ export class StructuredFilePrioritizer implements FilePrioritizer {
         prose: proseResult.prose,
         schema: filePrioritizationAgentOutputSchema,
         instructions:
-          'Extract every file the analyst named in the prose. Any path explicitly ranked, prioritized, or excluded — including anything under headings like "Prioritized", "Excluded", "Candidates", or numbered / bulleted lists — MUST appear as its own entry. Each entry has a path, a score between 0 and 1, a short rationale, and optionally a category; fill whatever the prose supplies. Do not drop paths the prose mentions.',
+          'Extract every file the analyst named in the prose. Files listed under "High Priority" or "Critical" sections get score 0.9, "Medium Priority" sections get score 0.5, "Low Priority" sections get score 0.2. Any path explicitly ranked, prioritized, or excluded — including anything under headings like "Prioritized", "Excluded", "Candidates", "High Priority", "Medium Priority", "Low Priority", or numbered / bulleted lists — MUST appear as its own entry. Each entry has a path, a score between 0 and 1, a short rationale, and optionally a category; fill whatever the prose supplies. Do not drop paths the prose mentions.',
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

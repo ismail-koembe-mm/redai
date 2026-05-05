@@ -159,6 +159,7 @@ export const geminiScannerAgentRunner: ScannerAgentRunner = {
     const { structuredOutput, transcriptArtifact } = await collectGeminiAgentOutput({
       runId: input.runId,
       prompt: input.prompt,
+      cwd: input.cwd, // pass source directory as Gemini CLI workspace
       transcriptPath: `transcripts/gemini-${input.transcriptName}.txt`,
       transcriptTitle: `Gemini ${lowercaseFirst(input.transcriptLabel)}`,
       ...(input.artifactStore ? { artifactStore: input.artifactStore } : {}),
@@ -170,6 +171,7 @@ export const geminiScannerAgentRunner: ScannerAgentRunner = {
     const { finalResponse, transcriptArtifact } = await collectGeminiAgentOutput({
       runId: input.runId,
       prompt: input.prompt,
+      cwd: input.cwd, // pass source directory as Gemini CLI workspace
       transcriptPath: `transcripts/gemini-${input.transcriptName}.txt`,
       transcriptTitle: `Gemini ${lowercaseFirst(input.transcriptLabel)}`,
       ...(input.artifactStore ? { artifactStore: input.artifactStore } : {}),

@@ -34,7 +34,7 @@ export async function collectGeminiStructuredOutput(
     const ai = createGeminiClient();
 
     const response = await ai.models.generateContent({
-        model: input.model ?? "gemini-2.0-flash",
+        model: input.model ?? "gemini-2.5-flash",
         contents: [{ role: "user", parts: [{ text: input.input }] }],
         config: {
             systemInstruction: input.instructions,

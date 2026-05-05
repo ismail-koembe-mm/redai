@@ -13,6 +13,7 @@ const defaultIgnorePatterns = [
   "coverage/**",
   "tmp/**",
   "temp/**",
+  ".agents/**", //avoid scanning agent files
 ];
 
 const sourceExtensions = new Set([

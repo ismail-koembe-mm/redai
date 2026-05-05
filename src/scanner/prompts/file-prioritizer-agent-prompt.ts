@@ -37,6 +37,11 @@ Read it however you like — in chunks, via grep, however. Navigate the source t
 
 Score each file you choose to rank on a 0..1 scale where 1 means "definitely scan" and 0 means "almost certainly nothing security-relevant here". Be calibrated — most files shouldn't be 1.0. Files clearly out of scope (fixtures, generated code, vendored assets, pure UI, etc.) belong in "excluded" so they're skipped entirely.
 
+IMPORTANT: For each file you rank or exclude, write it individually on its own line in this exact format:
+- path/to/file.ts (score: 0.9) — rationale here
+
+Do not group files under category headings without individual scores. Every file must have its own score written next to it.
+
 Use bare relative file paths exactly as they appear in the candidate list. Do not append line or column numbers to ranked or excluded paths.
 
 Boundaries:

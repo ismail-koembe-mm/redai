@@ -1,42 +1,29 @@
-import { readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { GoogleGenAI, type Content } from "@google/genai";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { RunArtifactStore } from "../../artifacts/run-artifact-store";
 import { loadLocalEnv } from "../../config/load-local-env";
 import type { Artifact } from "../../domain";
 import type { RunEventEmitter } from "../../pipeline/events";
 
+const execFileAsync = promisify(execFile);
+
 export interface CollectGeminiAgentOutputInput {
     runId: string;
     prompt: string;
     model?: string;
+    cwd?: string; // working directory for Gemini CLI — controls sandbox workspace
     transcriptPath: string;
     transcriptTitle: string;
     artifactStore?: RunArtifactStore;
     emit?: RunEventEmitter;
     jobId?: string;
+    env?: Record<string, string>;
 }
 
 export interface CollectGeminiAgentOutputResult {
     structuredOutput: unknown;
     transcriptArtifact?: Artifact;
     finalResponse: string;
-}
-
-function createGeminiClient(): GoogleGenAI {
-    if (!process.env.GEMINI_API_KEY && !process.env.GOOGLE_CLOUD_PROJECT) loadLocalEnv();
-
-    if (process.env.GOOGLE_CLOUD_PROJECT) {
-        return new GoogleGenAI({
-            vertexai: true,
-            project: process.env.GOOGLE_CLOUD_PROJECT,
-            location: process.env.GOOGLE_CLOUD_LOCATION ?? "us-central1",
-        });
-    }
-
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("GEMINI_API_KEY is not set.");
-    return new GoogleGenAI({ apiKey });
 }
 
 export function canUseGeminiAgentSdk(): boolean {
@@ -47,32 +34,54 @@ export function canUseGeminiAgentSdk(): boolean {
 export async function collectGeminiAgentOutput(
     input: CollectGeminiAgentOutputInput,
 ): Promise<CollectGeminiAgentOutputResult> {
-    const ai = createGeminiClient();
-    const messages: string[] = [];
+    const agentEnv = { ...process.env, ...(input.env ?? {}) };
+    const geminiPath = await resolveGeminiPath();
+    const model = input.model ?? "gemini-2.5-flash";
 
-    const enrichedPrompt = await injectFileContents(input.prompt);
-
-    const contents: Content[] = [
-        { role: "user", parts: [{ text: enrichedPrompt }] },
+    const args = [
+        "-m", model,
+        "--approval-mode", "yolo",
+        "-p", input.prompt,
     ];
 
-    const response = await ai.models.generateContent({
-        model: input.model ?? "gemini-2.0-flash",
-        contents,
-        config: { maxOutputTokens: 8192 },
-    });
+    let finalResponse = "";
+    let stdout = "";
+    let stderr = "";
 
-    const finalResponse =
-        response.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+    try {
+        const result = await execFileAsync(geminiPath, args, {
+            env: agentEnv,
+            timeout: 5 * 60 * 1000, // 5 minutes
+            maxBuffer: 10 * 1024 * 1024, // 10MB
+            // Use provided cwd (source dir) so Gemini CLI can access source files.
+            // home directory so ~/.redai is always accessible.
+            cwd: process.env.HOME,
+        });
+        stdout = result.stdout;
+        stderr = result.stderr;
+        finalResponse = stdout.trim();
+    } catch (error: unknown) {
+        const err = error as { stdout?: string; stderr?: string; message?: string };
+        stdout = err.stdout ?? "";
+        stderr = err.stderr ?? "";
+        finalResponse = stdout.trim() || `Error: ${err.message ?? String(error)}`;
+    }
 
-    messages.push(`user: ${enrichedPrompt}`);
-    messages.push(`assistant: ${finalResponse}`);
+    if (input.emit && input.jobId) {
+        await input.emit({
+            type: "validation.agent.output",
+            runId: input.runId,
+            jobId: input.jobId,
+            message: `Agent: ${finalResponse.slice(0, 220)}`,
+        });
+    }
 
-    const structuredOutput = extractJsonObject(finalResponse);
+    const transcriptContent = [
+        `user: ${input.prompt}`,
+        `assistant: ${finalResponse}`,
+        stderr ? `stderr: ${stderr}` : "",
+    ].filter(Boolean).join("\n") + "\n";
 
-    await emitGeminiTrace(input, finalResponse);
-
-    const transcriptContent = messages.join("\n") + "\n";
     const transcriptArtifact = input.artifactStore
         ? await input.artifactStore.writeText(
             input.runId,
@@ -82,7 +91,7 @@ export async function collectGeminiAgentOutput(
                 kind: "agent-transcript",
                 title: input.transcriptTitle,
                 contentType: "text/plain",
-                summary: `Captured ${messages.length} Gemini messages.`,
+                summary: `Gemini CLI agent output captured.`,
             },
         )
         : undefined;
@@ -96,39 +105,20 @@ export async function collectGeminiAgentOutput(
         });
     }
 
+    const structuredOutput = extractJsonObject(finalResponse);
+
     return transcriptArtifact
         ? { structuredOutput, transcriptArtifact, finalResponse }
         : { structuredOutput, finalResponse };
 }
 
-async function injectFileContents(prompt: string): Promise<string> {
-    const pathMatches = prompt.match(/\/[^\s"'`]+\.[a-zA-Z]{1,10}/g) ?? [];
-    const unique = Array.from(new Set(pathMatches));
-    let enriched = prompt;
-
-    for (const filePath of unique) {
-        if (!existsSync(filePath)) continue;
-        try {
-            const content = await readFile(filePath, "utf8");
-            enriched += `\n\n--- Contents of ${filePath} ---\n${content}\n--- End of ${filePath} ---`;
-        } catch {
-            // Skip unreadable files
-        }
+async function resolveGeminiPath(): Promise<string> {
+    try {
+        const { stdout } = await execFileAsync("which", ["gemini"]);
+        return stdout.trim();
+    } catch {
+        return "/opt/homebrew/bin/gemini";
     }
-    return enriched;
-}
-
-async function emitGeminiTrace(
-    input: CollectGeminiAgentOutputInput,
-    response: string,
-): Promise<void> {
-    if (!input.emit || !input.jobId) return;
-    await input.emit({
-        type: "validation.agent.output",
-        runId: input.runId,
-        jobId: input.jobId,
-        message: `Agent: ${response.slice(0, 220)}`,
-    });
 }
 
 function extractJsonObject(text: string): unknown {

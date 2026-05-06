@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { GoogleGenAI, type Content } from "@google/genai";
 import type { RunArtifactStore } from "../../artifacts/run-artifact-store";
@@ -57,9 +57,10 @@ export async function collectGeminiAgentOutput(
     ];
 
     const response = await ai.models.generateContent({
-        model: input.model ?? "gemini-2.0-flash",
+        // Use gemini-2.5-flash for larger context window support
+        model: input.model ?? "gemini-2.5-flash",
         contents,
-        config: { maxOutputTokens: 8192 },
+        config: { maxOutputTokens: 32768 },
     });
 
     const finalResponse =
@@ -109,6 +110,11 @@ async function injectFileContents(prompt: string): Promise<string> {
     for (const filePath of unique) {
         if (!existsSync(filePath)) continue;
         try {
+            // Skip large files — agent can read them directly from disk.
+            // Injecting large files (e.g. candidate-paths.txt) fills the context window
+            // and prevents Gemini from generating a useful response.
+            const fileStat = await stat(filePath);
+            if (fileStat.size > 50 * 1024) continue;
             const content = await readFile(filePath, "utf8");
             enriched += `\n\n--- Contents of ${filePath} ---\n${content}\n--- End of ${filePath} ---`;
         } catch {

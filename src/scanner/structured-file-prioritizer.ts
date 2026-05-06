@@ -70,6 +70,7 @@ export class StructuredFilePrioritizer implements FilePrioritizer {
         run: input.run,
         threatModel: input.threatModel,
         candidatePathsFile,
+        candidatePaths: input.candidatePaths,
         candidateCount: input.candidatePaths.length,
         scratchDir,
       }),

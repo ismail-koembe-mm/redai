@@ -81,7 +81,16 @@ export const geminiStructurer: Structurer = {
   async structure(input) {
     const jsonSchema = z.toJSONSchema(input.schema) as Record<string, unknown>;
     const raw = await collectGeminiStructuredOutput({
-      instructions: `${STRUCTURER_SYSTEM}\n\nAnalyst was asked to: ${input.instructions}`,
+      instructions: `You are a precise data extraction assistant. Your task is to parse a categorized list of files and convert them into the requested structured format.
+
+CRITICAL PARSING RULES:
+1. Files under "Score 1.0", "Score 0.9", "Score 0.8" etc. sections: MUST go into the prioritized array with that exact numeric score.
+2. Files under "Excluded" or "Score 0.0" sections: go into the excluded array.
+3. NEVER put scored files (score > 0) into the excluded array.
+4. Extract the exact numeric score from the section heading for each file.
+5. Every file mentioned must appear in the output.
+
+Analyst was asked to: ${input.instructions}`,
       input: `Analyst prose:\n${input.prose}`,
       outputSchema: jsonSchema,
       toolName: "submit_output",

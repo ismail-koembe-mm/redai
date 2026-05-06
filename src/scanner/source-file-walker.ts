@@ -6,14 +6,21 @@ import ignore from "ignore";
 
 const defaultIgnorePatterns = [
   ".git/**",
-  "node_modules/**",
-  "dist/**",
-  "build/**",
-  ".next/**",
-  "coverage/**",
-  "tmp/**",
-  "temp/**",
-  ".agents/**", // avoid scanning agent skill files injected by RedAI
+  "**/node_modules/**",
+  "**/vendor/**",           // PHP dependencies at any depth
+  "**/dist/**",
+  "**/build/**",
+  "**/.next/**",
+  "**/coverage/**",
+  "**/tmp/**",
+  "**/temp/**",
+  "**/var/**",              // Symfony cache and logs
+  "**/pipeline-tests/**",  // Cypress test suites per service
+  "**/testing-cypress/**", // Global cypress testing directory
+  "**/fixtures/**",        // Test fixtures
+  "**/migrations/**",      // Database migrations
+  "**/translations/**",    // Translation files
+  ".agents/**",            // Avoid scanning agent skill files injected by RedAI
 ];
 
 const sourceExtensions = new Set([
@@ -28,10 +35,12 @@ const sourceExtensions = new Set([
   ".mjs",
   ".mm",
   ".mts",
+  ".php",   // PHP source files
   ".py",
   ".swift",
   ".ts",
   ".tsx",
+  ".twig",  // Symfony/Twig templates — can contain XSS vectors
 ]);
 
 const sourceBasenames = new Set([
@@ -43,6 +52,7 @@ const sourceBasenames = new Set([
   "Podfile",
   "package.json",
   "tsconfig.json",
+  "composer.json",  // PHP dependency manifest — important for supply chain
 ]);
 
 export interface SourceFile {
@@ -107,7 +117,19 @@ function isSourceRelevant(relativePath: string): boolean {
   const basename = relativePath.split("/").at(-1) ?? relativePath;
   if (sourceBasenames.has(basename)) return true;
   if (looksSecretLike(basename)) return false;
+  if (looksTestLike(relativePath)) return false;
   return sourceExtensions.has(extname(relativePath));
+}
+
+// Detect test files, fixtures, snapshots, and generated code
+function looksTestLike(relativePath: string): boolean {
+  // Skip known test directories
+  if (/\/(cypress|__tests__|__mocks__|__fixtures__|__snapshots__|stories|storybook|pipeline-tests|testing-cypress)\//i.test(relativePath)) return true;
+  // Skip test files by extension pattern (JS/TS and PHP)
+  if (/\.(test|spec|story|stories|mock|fixture|stub)\.(ts|tsx|js|jsx|php)$/.test(relativePath)) return true;
+  // Skip Jest/Vitest snapshot files
+  if (relativePath.endsWith(".snap")) return true;
+  return false;
 }
 
 function looksSecretLike(basename: string): boolean {

@@ -110,11 +110,8 @@ async function injectFileContents(prompt: string): Promise<string> {
     for (const filePath of unique) {
         if (!existsSync(filePath)) continue;
         try {
-            // Skip large files — agent can read them directly from disk.
-            // Injecting large files (e.g. candidate-paths.txt) fills the context window
-            // and prevents Gemini from generating a useful response.
-            const fileStat = await stat(filePath);
-            if (fileStat.size > 50 * 1024) continue;
+            // Skip candidate-paths.txt — it can be very large and is handled separately
+            if (filePath.includes("candidate-paths.txt")) continue;
             const content = await readFile(filePath, "utf8");
             enriched += `\n\n--- Contents of ${filePath} ---\n${content}\n--- End of ${filePath} ---`;
         } catch {
